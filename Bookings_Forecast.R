@@ -38,3 +38,6 @@ pickup <- function(data,h){
   # Return forecast
   return(fc)
 }
+
+# Next function
+# Maybe straight ARIMA
