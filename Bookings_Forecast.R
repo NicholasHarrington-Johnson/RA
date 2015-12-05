@@ -39,7 +39,7 @@ pickup <- function(data,h){
   return(fc)
 }
 # Regression models with ARIMA Errors
-booking.arima <- function(data,h,phols=0,full.fit=0){
+booking.arima <- function(data,h,phols=0,full.fit=0,knots=NA){
   # Take training set
   new.data <- data[(1:(nrow(data)-h)),]
   # Apply time series properties
@@ -50,7 +50,11 @@ booking.arima <- function(data,h,phols=0,full.fit=0){
   # Fix frequency to 7
   log.attend <- ts(log.attend,start=1,frequency=7)
   # Remove zeros from data
+  ###
+  # Note that this step appears to create bad forecasts
+  # BOTH in spline model AND in regular ARIMA type models
   log.attend[log.attend<1] <- NA
+  # Create x regressors as required
   # Take Public Holiday Variables if required
   if(phols==1){
     xdums <- new.data[,(ncol(new.data)-2):ncol(new.data)]
@@ -61,25 +65,84 @@ booking.arima <- function(data,h,phols=0,full.fit=0){
     if (total.xdum[1]==0) {xdums$pubd <- NULL}
     if (total.xdum[2]==0) {xdums$pubi <- NULL}
     if (total.xdum[3]==0) {xdums$pubny <- NULL} 
-    # Fit Regression Model with Public Holidays and ARIMA Errors
-    fit <- auto.arima(log.attend,xreg=xdums)
-  } else {
-    # Fit ARIMA Model
-    fit <- auto.arima(log.attend)
+    # Fit Regression Model with Spline Terms as required
+    if (is.na(knots)){
+      # Fit Regression Model with Public Holidays and ARIMA Errors
+      fit <- auto.arima(log.attend,xreg=xdums)
+    } else if (knots==0){
+      # Attach unaltered bookings column to forecasts
+      spline.terms <- new.data[,(h+1)]
+    } else if (knots>0){
+      # Knot values set at quantiles
+      # Zeros are removed when selecting knots
+      knot.pos <- quantile(data[,(h+1)][data[,(h+1)]>0],prob=((1:knots)/(knots+1)))
+      # Whole b_t,j is used to fit spline
+      full.spline <- ns(data[,(h+1)],knots=knot.pos)
+      # Tail of full.spline is saved for forecasting
+      spline.terms <- full.spline[1:nrow(new.data),]
+    }
+    # Fit model to spline terms
+    if(!is.null(xdums)&!is.null(spline.terms)){
+      spline.xdums <- cbind(xdums,spline.terms)
+      fit <- auto.arima(log.attend,xreg=spline.xdums)
+    }   
+  } else if (phols==0) {
+    # Fit Regression Model with Spline Terms as required
+    if (is.na(knots)){
+      # Fit ARIMA Model
+      fit <- auto.arima(log.attend)
+    } else if (knots==0){
+      # Attach unaltered bookings column to forecasts
+      spline.terms <- new.data[,(h+1)]
+    } else if (knots>0){
+      # Knot values set at quantiles
+      # Zeros are removed when selecting knots
+      knot.pos <- quantile(data[,(h+1)][data[,(h+1)]>0],prob=((1:knots)/(knots+1)))
+      # Whole b_t,j is used to fit spline
+      full.spline <- ns(data[,(h+1)],knots=knot.pos)
+      # Tail of full.spline is saved for forecasting
+      spline.terms <- full.spline[1:nrow(new.data),]
+    }
+    # Fit model to spline terms
+    if(!is.na(knots)){
+      fit <- auto.arima(log.attend,xreg=spline.terms)
+    }
   }
-  # Create x regressors as required
+  # Create forecasting x regressors as required
   if(phols==1){
-    xfor <- data[((nrow(data)-h):nrow(data)),(ncol(data)-2):ncol(data)]
+    xfor <- data[((nrow(data)-h+1):nrow(data)),(ncol(data)-2):ncol(data)]
     colnames(xfor) <- c("pubd","pubi","pubny")
     # Remove x regressors as required
     if (total.xdum[1]==0) {xfor$pubd <- NULL} 
     if (total.xdum[2]==0) {xfor$pubi <- NULL}
     if (total.xdum[3]==0) {xfor$pubny <- NULL}
-    # Forecast with Public Holiday Dummies
-    fc <- forecast(fit,h,xreg=xfor)
-  } else{
-    # Forecast
-    fc <- forecast(fit,h)
+    # Forecast with Public Holiday Dummies and Spline Terms as required
+    if (is.na(knots)){
+      fc <- forecast(fit,h,xreg=xfor) 
+    }
+    else if (knots==0){
+      spline.for <- tail(data[,(h+1)],n=h)
+    } else if (knots>0){
+      spline.for <- tail(full.spline,h)
+    }
+    if (!is.null(xfor)&!is.null(spline.for)){
+      xfor <- cbind(xfor,spline.for)
+      fc <- forecast(fit,h,xreg=xfor)
+    }
+  } else if (phols==0){
+    # Forecast without public holidays
+    if (is.na(knots)){
+      fc <- forecast(fit,h) 
+    }
+    else if (knots==0){
+      spline.for <- tail(data[,(h+1)],n=h)
+    } else if (knots>0){
+      spline.for <- tail(full.spline,h)
+    }
+    if (!is.na(knots)){
+      xfor <- spline.for
+      fc <- forecast(fit,h,xreg=xfor)
+    }
   }
   # Exponentiate
   fc$mean <- exp(fc$mean)-1
@@ -96,4 +159,19 @@ booking.arima <- function(data,h,phols=0,full.fit=0){
   }
   return(fc)
 }
-# Next one with splines
+# Function that can iterate through past bookings
+h_step <- function(h,...){
+  fc <- booking.arima(h,...)
+  obj<-fc$mean[h]
+  return(obj)
+}
+# Function that iterates through past bookings
+full.spline.regression <- function(data,h=14,phols=0,knots=0){
+  # Define vector to forecast over
+  days <- c(1:h)
+  # Iterate through vector of forecast horizons
+  fc <- sapply(days,function(horizon) {h_step(h=horizon,data=data,phols=phols,knots=knots)})  
+  # Apply time series properties to forecast
+  fc <- ts(fc,start=tsp(data$pubd)[2]-(h/365),end=tsp(data$pubd)[2],frequency=365)
+  return(fc)
+}
