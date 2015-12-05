@@ -42,10 +42,15 @@ pickup <- function(data,h){
 booking.arima <- function(data,h,phols=0,full.fit=0){
   # Take training set
   new.data <- data[(1:(nrow(data)-h)),]
+  # Apply time series properties
+  new.data$pubd <- ts(new.data$pubd,end=tsp(data$pubd)[1]+((nrow(data)-h)/365))
+  new.data$pubd <- ts(new.data$pubd,start=tsp(data$pubd)[1],frequency=tsp(data$pubd)[3])
   # Perform log transformation
   log.attend <- apply(new.data+1,2,log)[,1]
   # Fix frequency to 7
   log.attend <- ts(log.attend,start=1,frequency=7)
+  # Remove zeros from data
+  log.attend[log.attend<1] <- NA
   # Take Public Holiday Variables if required
   if(phols==1){
     xdums <- new.data[,(ncol(new.data)-2):ncol(new.data)]
@@ -82,12 +87,13 @@ booking.arima <- function(data,h,phols=0,full.fit=0){
   fc$upper <- exp(fc$upper)-1
   fc$x <- ts(new.data[,1],frequency=365)
   tsp(fc$x)<-tsp(new.data$pubd)
-  fc$mean <- ts(fc$mean, start = tsp(fc$x)[2]+1/365, frequency=365)
+  fc$mean <- ts(fc$mean, end =tsp(data$pubd)[2], frequency=365)
+  fc$mean <- ts(fc$mean, start = (tsp(fc$x)[2]+(1/365)), frequency=365)
   tsp(fc$upper) <- tsp(fc$lower) <- tsp(fc$mean) 
   if(full.fit==1){
-    obj <- list(fit,fc.values)
+    obj <- list(fit,fc)
     return(obj)
   }
-  return(fc.values)
+  return(fc)
 }
 # Next one with splines
