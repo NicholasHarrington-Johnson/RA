@@ -38,6 +38,56 @@ pickup <- function(data,h){
   # Return forecast
   return(fc)
 }
-
-# Next function
-# Maybe straight ARIMA
+# Regression models with ARIMA Errors
+booking.arima <- function(data,h,phols=0,full.fit=0){
+  # Take training set
+  new.data <- data[(1:(nrow(data)-h)),]
+  # Perform log transformation
+  log.attend <- apply(new.data+1,2,log)[,1]
+  # Fix frequency to 7
+  log.attend <- ts(log.attend,start=1,frequency=7)
+  # Take Public Holiday Variables if required
+  if(phols==1){
+    xdums <- new.data[,(ncol(new.data)-2):ncol(new.data)]
+    colnames(xdums) <- c("pubd","pubi","pubny")
+    # Figure out if there are public holidays in sample
+    total.xdum <- colSums(xdums)
+    # Remove dummy variables if there are no public holidays in sample
+    if (total.xdum[1]==0) {xdums$pubd <- NULL}
+    if (total.xdum[2]==0) {xdums$pubi <- NULL}
+    if (total.xdum[3]==0) {xdums$pubny <- NULL} 
+    # Fit Regression Model with Public Holidays and ARIMA Errors
+    fit <- auto.arima(log.attend,xreg=xdums)
+  } else {
+    # Fit ARIMA Model
+    fit <- auto.arima(log.attend)
+  }
+  # Create x regressors as required
+  if(phols==1){
+    xfor <- data[((nrow(data)-h):nrow(data)),(ncol(data)-2):ncol(data)]
+    colnames(xfor) <- c("pubd","pubi","pubny")
+    # Remove x regressors as required
+    if (total.xdum[1]==0) {xfor$pubd <- NULL} 
+    if (total.xdum[2]==0) {xfor$pubi <- NULL}
+    if (total.xdum[3]==0) {xfor$pubny <- NULL}
+    # Forecast with Public Holiday Dummies
+    fc <- forecast(fit,h,xreg=xfor)
+  } else{
+    # Forecast
+    fc <- forecast(fit,h)
+  }
+  # Exponentiate
+  fc$mean <- exp(fc$mean)-1
+  fc$lower <- exp(fc$lower)-1
+  fc$upper <- exp(fc$upper)-1
+  fc$x <- ts(new.data[,1],frequency=365)
+  tsp(fc$x)<-tsp(new.data$pubd)
+  fc$mean <- ts(fc$mean, start = tsp(fc$x)[2]+1/365, frequency=365)
+  tsp(fc$upper) <- tsp(fc$lower) <- tsp(fc$mean) 
+  if(full.fit==1){
+    obj <- list(fit,fc.values)
+    return(obj)
+  }
+  return(fc.values)
+}
+# Next one with splines
